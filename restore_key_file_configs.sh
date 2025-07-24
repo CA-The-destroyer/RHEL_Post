@@ -35,7 +35,7 @@ declare -A file_map=(
   ["krb5.conf"]="/etc/krb5.conf"
   ["nsswitch.conf"]="/etc/nsswitch.conf"
   ["access.conf"]="/etc/security/access.conf"
-  ["pam_winbind.conf"]="/etc/pam_winbind.conf"
+  ["pam_winbind.conf"]="/etc/security/pam_winbind.conf"
 )
 
 echo "Restoring configs from backup dir: $BACKUP_DIR"
