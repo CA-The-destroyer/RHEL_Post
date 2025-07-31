@@ -36,6 +36,7 @@ declare -A file_map=(
   ["nsswitch.conf"]="/etc/nsswitch.conf"
   ["access.conf"]="/etc/security/access.conf"
   ["pam_winbind.conf"]="/etc/security/pam_winbind.conf"
+  ["ctxfas"]="/etc/pam.d/ctxfas"
 )
 
 echo "Restoring configs from backup dir: $BACKUP_DIR"
