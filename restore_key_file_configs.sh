@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# restore_configs.sh – restore backed-up config files to their default locations
+# restore_configs.sh – restore backed-up config files to their default locations,
+# convert to Unix format, and set mode a+rx
 
 set -euo pipefail
 
@@ -30,6 +31,12 @@ if (( EUID != 0 )); then
   exit 1
 fi
 
+# Ensure dos2unix is available
+if ! command -v dos2unix &>/dev/null; then
+  echo "ERROR: dos2unix not found. Install it (e.g. yum install dos2unix) before running." >&2
+  exit 1
+fi
+
 # Map of filename → destination path
 declare -A file_map=(
   ["krb5.conf"]="/etc/krb5.conf"
@@ -37,6 +44,7 @@ declare -A file_map=(
   ["access.conf"]="/etc/security/access.conf"
   ["pam_winbind.conf"]="/etc/security/pam_winbind.conf"
   ["ctxfas"]="/etc/pam.d/ctxfas"
+  ["smb.conf"]="/etc/samba/smb.conf"
 )
 
 echo "Restoring configs from backup dir: $BACKUP_DIR"
@@ -55,6 +63,12 @@ for filename in "${!file_map[@]}"; do
   # Copy, preserving mode/ownership
   echo "  → $SRC → $DEST"
   cp -a "$SRC" "$DEST"
+
+  # Normalize line endings
+  dos2unix "$DEST" &>/dev/null
+
+  # Make readable & executable by all
+  chmod a+rx "$DEST"
 done
 
 echo "Restore complete."
