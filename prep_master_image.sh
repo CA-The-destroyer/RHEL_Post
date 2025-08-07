@@ -11,31 +11,46 @@ set -euo pipefail
 #────────────────────────────────────────────────────────────
 # Configuration
 #────────────────────────────────────────────────────────────
-
-DOMAIN_ADMIN="Administrator"
 TEMPLATE_PREFIX="clean-vda-template"
 DATESTAMP=$(date +%Y%m%d)
 TIMESTAMP=$(date +%H%M)
 TAG="${DATESTAMP}_${TIMESTAMP}"
 NEW_HOSTNAME="${TEMPLATE_PREFIX}-${TAG}"
 
+#────────────────────────────────────────────────────────────
+# Pre-check: Ensure 'expect' is installed
+#────────────────────────────────────────────────────────────
+if ! command -v expect >/dev/null 2>&1; then
+    echo "🔧 'expect' not found. Installing..."
+    sudo dnf install -y expect
+fi
+
 echo
 echo "🔧 Citrix VDA Master Image Preparation (winbind-based)"
 echo "------------------------------------------------------"
-echo " Domain Admin User     : $DOMAIN_ADMIN"
 echo " New Hostname Template : $NEW_HOSTNAME"
 echo
 
 #────────────────────────────────────────────────────────────
-# Step 1: Leave the Domain (if still joined)
+# Step 1: Prompt for domain leave credentials and leave domain
 #────────────────────────────────────────────────────────────
-echo "🧩 [Step 1/7] Attempting to leave the domain gracefully..."
+echo "🧩 [Step 1/7] Prompting for domain leave credentials..."
+
+read -rp "🧑 Enter domain username [default: Administrator]: " DOMAIN_ADMIN
+DOMAIN_ADMIN=${DOMAIN_ADMIN:-Administrator}
+
+read -rsp "🔐 Enter password for $DOMAIN_ADMIN: " DOMAIN_PASS
+echo
+
+echo "🔄 Attempting to leave the domain as $DOMAIN_ADMIN..."
 
 if net ads testjoin &>/dev/null; then
-    net ads leave -U "$DOMAIN_ADMIN" || {
-        echo "❌ ERROR: Failed to leave the domain. You may already be unjoined."
-        exit 1
-    }
+    expect <<EOF
+spawn net ads leave -U "$DOMAIN_ADMIN"
+expect "Password for *:"
+send "$DOMAIN_PASS\r"
+expect eof
+EOF
     echo "✅ Successfully left the domain."
 else
     echo "ℹ️ System appears to already be unjoined from the domain."
