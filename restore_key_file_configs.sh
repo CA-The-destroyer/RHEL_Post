@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# restore_configs.sh – restore backed-up config files to their default locations,
-# convert to Unix format, and set mode a+rx
+# restore_configs.sh – restore backed-up config files to standard locations,
+# run dos2unix, and set permissions (sudoers.d file validated via visudo)
 
 set -euo pipefail
 
@@ -13,10 +13,8 @@ Usage: $0 [-d backup_directory] [-h]
 EOF
 }
 
-# Default backup directory
 BACKUP_DIR="/backups"
 
-# Parse options
 while getopts "d:h" opt; do
   case $opt in
     d) BACKUP_DIR="$OPTARG" ;;
@@ -25,19 +23,19 @@ while getopts "d:h" opt; do
   esac
 done
 
-# Must run as root
+# Root required
 if (( EUID != 0 )); then
   echo "ERROR: This script must be run as root." >&2
   exit 1
 fi
 
-# Ensure dos2unix is available
+# deps
 if ! command -v dos2unix &>/dev/null; then
-  echo "ERROR: dos2unix not found. Install it (e.g. yum install dos2unix) before running." >&2
+  echo "ERROR: dos2unix not found. Install it (e.g. dnf install dos2unix) before running." >&2
   exit 1
 fi
 
-# Map of filename → destination path
+# filename -> destination
 declare -A file_map=(
   ["krb5.conf"]="/etc/krb5.conf"
   ["nsswitch.conf"]="/etc/nsswitch.conf"
@@ -45,30 +43,50 @@ declare -A file_map=(
   ["pam_winbind.conf"]="/etc/security/pam_winbind.conf"
   ["ctxfas"]="/etc/pam.d/ctxfas"
   ["smb.conf"]="/etc/samba/smb.conf"
+  ["support"]="/etc/sudoers.d/support"
 )
 
-echo "Restoring configs from backup dir: $BACKUP_DIR"
+echo "Restoring configs from: $BACKUP_DIR"
 for filename in "${!file_map[@]}"; do
   SRC="$BACKUP_DIR/$filename"
   DEST="${file_map[$filename]}"
 
   if [[ ! -f "$SRC" ]]; then
-    echo "Warning: backup file not found: $SRC" >&2
+    echo "Warning: missing backup file: $SRC" >&2
     continue
   fi
 
-  # Ensure destination directory exists
   mkdir -p "$(dirname "$DEST")"
 
-  # Copy, preserving mode/ownership
-  echo "  → $SRC → $DEST"
-  cp -a "$SRC" "$DEST"
+  if [[ "$filename" == "support" ]]; then
+    # Handle sudoers drop-in safely
+    if ! command -v visudo &>/dev/null; then
+      echo "ERROR: visudo not found; cannot validate /etc/sudoers.d/support. Aborting." >&2
+      exit 1
+    fi
 
-  # Normalize line endings
-  dos2unix "$DEST" &>/dev/null
+    TMP="${DEST}.tmp.$$"
+    cp -a "$SRC" "$TMP"
+    dos2unix "$TMP" &>/dev/null
 
-  # Make readable & executable by all
-  chmod a+rx "$DEST"
+    if visudo -cf "$TMP" &>/dev/null; then
+      # Enforce root:root and 0440 as required by sudoers
+      install -o root -g root -m 0440 "$TMP" "$DEST"
+      rm -f "$TMP"
+      echo "  ✓ sudoers validated and installed: $DEST (mode 0440)"
+    else
+      echo "ERROR: visudo syntax check FAILED for $SRC. Not installing." >&2
+      rm -f "$TMP"
+      continue
+    fi
+
+  else
+    # Regular configs: copy, normalize, and a+rx as requested
+    echo "  → $SRC → $DEST"
+    cp -a "$SRC" "$DEST"
+    dos2unix "$DEST" &>/dev/null
+    chmod a+rx "$DEST"
+  fi
 done
 
 echo "Restore complete."
