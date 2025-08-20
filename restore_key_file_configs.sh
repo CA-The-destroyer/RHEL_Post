@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # restore_configs.sh – restore backed-up config files to standard locations,
-# run dos2unix, set perms (special-cased for sudoers and sshd), and validate safely.
+# run dos2unix, set perms (sudoers & sshd special-cased), validate safely.
 
 set -euo pipefail
 
@@ -34,6 +34,13 @@ if ! command -v dos2unix &>/dev/null; then
   exit 1
 fi
 
+# Resolve and verify backup dir
+ABS_DIR="$(readlink -f "$BACKUP_DIR" 2>/dev/null || echo "$BACKUP_DIR")"
+if [[ ! -d "$BACKUP_DIR" ]]; then
+  echo "ERROR: Backup directory not found: $BACKUP_DIR" >&2
+  exit 1
+fi
+
 # filename -> destination
 declare -A file_map=(
   ["krb5.conf"]="/etc/krb5.conf"
@@ -46,7 +53,7 @@ declare -A file_map=(
   ["sshd_config"]="/etc/ssh/sshd_config"
 )
 
-echo "Restoring configs from: $BACKUP_DIR"
+echo "Restoring configs from: $ABS_DIR"
 for filename in "${!file_map[@]}"; do
   SRC="$BACKUP_DIR/$filename"
   DEST="${file_map[$filename]}"
@@ -60,12 +67,12 @@ for filename in "${!file_map[@]}"; do
 
   case "$filename" in
     support)
-      # Sudoers drop-in: validate and enforce 0440 root:root
+      echo "  → $SRC → $DEST (validating with visudo)"
       if ! command -v visudo &>/dev/null; then
         echo "ERROR: visudo not found; cannot validate $DEST. Aborting." >&2
         exit 1
       fi
-      TMP="${DEST}.tmp.$$"
+      TMP="$(mktemp /tmp/support.XXXXXX)"
       cp -a "$SRC" "$TMP"
       dos2unix "$TMP" &>/dev/null
       if visudo -cf "$TMP" &>/dev/null; then
@@ -81,15 +88,20 @@ for filename in "${!file_map[@]}"; do
       ;;
 
     sshd_config)
-      # sshd_config: validate and enforce 0600 root:root
-      if ! command -v sshd &>/dev/null; then
+      echo "  → $SRC → $DEST (validating with sshd -t)"
+      SSHD_BIN="$(command -v sshd || true)"
+      if [[ -z "$SSHD_BIN" ]]; then
+        # common fallback on RHEL
+        [[ -x /usr/sbin/sshd ]] && SSHD_BIN=/usr/sbin/sshd
+      fi
+      if [[ -z "$SSHD_BIN" ]]; then
         echo "ERROR: sshd binary not found; cannot validate sshd_config." >&2
         exit 1
       fi
-      TMP="${DEST}.tmp.$$"
+      TMP="$(mktemp /tmp/sshd_config.XXXXXX)"
       cp -a "$SRC" "$TMP"
       dos2unix "$TMP" &>/dev/null
-      if sshd -t -f "$TMP" &>/dev/null; then
+      if "$SSHD_BIN" -t -f "$TMP" &>/dev/null; then
         install -o root -g root -m 0600 "$TMP" "$DEST"
         rm -f "$TMP"
         command -v restorecon &>/dev/null && restorecon -F "$DEST" || true
@@ -102,14 +114,14 @@ for filename in "${!file_map[@]}"; do
       ;;
 
     *)
-      # Regular configs: copy, normalize, and a+rx as requested
       echo "  → $SRC → $DEST"
       cp -a "$SRC" "$DEST"
       dos2unix "$DEST" &>/dev/null
       chmod a+rx "$DEST"
-      command -v restorecon &>/dev/null && restorecon -F "$DEST" || true
+      command -v restorecon &>/devnull && restorecon -F "$DEST" || true
       ;;
   esac
 done
 
 echo "Restore complete."
+echo "Tip: 'sshd -t && systemctl reload sshd' after sshd_config changes."
